@@ -1,0 +1,1074 @@
+---
+title: "Are Wins a Quarterback Stat?"
+author: "Brian Papiernik, Casey Kmet, Kiki Van Zanten, JD Bertrand, Quinn Murphy"
+date: "2023-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(nflfastR) # Load nflfastR
+library(tidyverse) # load tidyverse
+library(reldist) # Load reldist for gini
+library(ggplot2) # Load ggplot2
+library(ggimage) # Load ggimage
+library(ggdark) # Load ggdark
+library(ggrepel) # Load ggrepel
+library(dplyr)
+
+
+
+# install.packages("randomForest")
+# install.packages("rpart")
+# install.packages("caret")
+library(randomForest) # Load randomForest package to run bagging
+library(rpart) # Load rpart for decision trees
+library(caret) # Used for analysing results
+#install.packages("splitstackshape")
+library(splitstackshape) # Used for stratified sampling
+#install.packages("xgboost")
+#install.packages("caret")
+#install.packages("ggplot2")
+#library(devtools) 
+#install.packages("githubinstall")
+library(devtools)
+#install_github("AppliedDataSciencePartners/xgboostExplainer")
+#install.packages("SHAPforxgboost")
+#install.packages("GGally")
+#install.packages("gh")
+
+library(xgboost) # Load XGBoost
+library(caret) # Load Caret
+library(ggplot2) # Load ggplot2
+library(pROC) # Load proc
+library(SHAPforxgboost) # Load shap for XGBoost
+library(caTools)
+library(dplyr)
+library(GGally)
+
+library(pROC) # Load proc
+library(data.table)
+library(gh)
+library(commonmark)
+library(xgboostExplainer)
+
+```
+
+# Data Preparations
+
+The lines below are how our group ended up extracting the 2023 play by play NFL dataset from the R package and choosing the relevant variables for our analysis.
+
+
+```{r}
+pbp_2023 <- load_pbp(2023)
+playerstats <- load_player_stats(2023)
+```
+
+```{r}
+head(pbp_2023)
+head(playerstats)
+```
+
+Here we continue to remove unwanted variables
+
+```{r}
+pbp1_2023 <- pbp_2023 %>%
+  select(-c(,6,11,25,28,50:53,56:63,293:297,299,303,307,326:335,338:340,360:364))
+
+
+```
+
+After, our group creates a Time Split column that splits the string by the :. After we convert both column into numeric data and create a new column called drive_seconds that takes the minute column, multiplies it by 60 and added it to the seconds columns. This new variable gives the total amount of seconds for each drive in a unique game_id.
+
+```{r}
+pbp1_2023$TimeSplit <- strsplit(as.character(pbp1_2023$drive_time_of_possession), ":")
+
+# Extract the components and append to new columns
+pbp1_2023$minute <- sapply(pbp1_2023$TimeSplit, function(x) as.numeric(x[1]))
+pbp1_2023$seconds <- sapply(pbp1_2023$TimeSplit, function(x) as.numeric(x[2]))
+
+
+
+pbp1_2023$drive_seconds <- (pbp1_2023$minute *60) + pbp1_2023$seconds
+pbp1_2023$drive_seconds
+```
+
+```{r}
+head(pbp1_2023)
+
+
+```
+```{r}
+
+selected_row <- pbp_2023$play_type_nfl[175]
+```
+
+Here, we continue to remove unwanted variables.
+
+```{r}
+pbp2_2023 <- pbp1_2023 %>%
+  select(-c(,1,3,8:9,11,22,45,69:78,82:83,86,87:91,96:103,156,159,162,165,168,170:223,225:254,255,257,259,261:262,268:270,275, 276:277,280:281,283,285,289:290,292:299,302:310,314:322,331:333))
+
+
+```
+
+```{r}
+head(pbp2_2023)
+```
+
+After, we create a new dataset by removing more of the unwanted variables from the previous dataset.
+
+```{r}
+pbp3_2023 <- pbp2_2023 %>%
+  select(-c(,7:8,10:11,14))
+head(pbp3_2023)
+```
+
+Again, we finally remove more unwanted variables.
+
+```{r}
+pbp4_2023 <- pbp3_2023 %>%
+  select(-c(,11,78,95:96,114,134:135)) %>%
+  filter(home_score > away_score)
+pbp4_2023
+```
+
+
+
+
+
+In the code below, we create a binary variable "win" for analysis purposes later for home wins. This new binary win variable is based on the conditions that the home score is greater than the away score and the home team is equal to the team with possession. We needed the second function to only distinguish the players on the home team that won in the play by play data. Our group didn't want to group the away losing team with a value of 1 and only include the home winning team with a value of 1. It is important to note that an away winning team is categorized with a value of 0.
+
+
+```{r}
+pbp4_2023$win <- ifelse(pbp4_2023$home_score > pbp4_2023$away_score & pbp4_2023$home_team == pbp4_2023$posteam, 1, 0)
+pbp4_2023
+
+```
+
+pbp4_2023$actual_yac_over_xyac = actual yards after catch minus expected yards after catch was create to see how well receivers overperform the mean of the expected yard after catch based on ball location. better receivers should have a higher value
+
+xyac_mean_yardage is Average expected yards after the catch based on where the ball was caught.
+
+```{r}
+pbp4_2023$passing_yards[is.na(pbp4_2023$passing_yards)] <- 0
+pbp4_2023$rushing_yards[is.na(pbp4_2023$rushing_yards)] <- 0
+pbp4_2023$receiving_yards[is.na(pbp4_2023$receiving_yards)] <- 0
+pbp4_2023$air_yards[is.na(pbp4_2023$air_yards)] <- 0
+pbp4_2023$actual_yac_over_xyac = pbp4_2023$yards_after_catch - pbp4_2023$xyac_mean_yardage
+head(pbp4_2023)
+
+
+```
+
+
+
+Disregard pbp5_2023
+
+```{r}
+pbp5_2023 <- pbp4_2023 %>%
+  group_by(game_id, passer_player_id, ) %>%
+  mutate(total_passing_yards = sum(passing_yards),
+         total_rushing_yards = sum(rushing_yards),
+         actual_yac_over_xyac = yards_after_catch - xyac_mean_yardage)
+
+pbp5_2023
+```
+
+Here we create our most important dataset. This code snippet is written in R and uses the dplyr package for data manipulation. It takes a dataset (pbp4_2023) and transforms it into pbp6_2023 by grouping data by multiple variables including game ID, win status, team, and player IDs for passers, rushers, and receivers. It calculates various aggregated statistics such as total and average passing, rushing, and receiving yards, completion percentages, touchdown counts, and other metrics like average Expected Points Added (EPA) for quarterbacks, average yards after catch EPA, and total penalty yards. The data is also summarized for play types like shotgun or no-huddle plays. The resulting dataset pbp6_2023 provides a comprehensive statistical breakdown for each game, team, and key players, focusing on different aspects of play-by-play performance.
+
+A summary of each derivative statistical variable based on play by play performance metrics is provided below. The derivative statistical data for each position are divided into run plays and pass plays and are broken down into pass length and pass location for pass plays or run gap and run location for run plays. These derivative statistical data are further grouped for each specific quarterback_id, rusher_id, and wide_receiver_id for each specific game_id based on the zone locations above:
+
+"broken down by pass length and pass location for quarterback_id and wide receiver id for each specific game_id"
+total passing yards
+pass attempts
+incomplete pass
+completion percentage
+average passing yards
+total air passing yards - total yards thrown with or without completion
+average air passing yards - average yards thrown with or without completion
+passing touchdown totals
+total receiving yards
+average receiving yards
+average cpoe - completion percentage above expectation "CPOE accounts for air distance, distance from the sideline, target separation from the nearest defender, the quarterback's distance from the closest pass rusher, pass speed, and time to throw."
+total first downs
+average quarterback expected points added (epa)
+average expected yards after catch epa
+average air yards epa
+average yards after catch epa
+actual yards after catch minus expected points after catch epa (self-created stat to show how well a receiver performs in yards after catch compared to mean expected yards after catch)
+total_actual_yac_over_xyac = sum(actual_yac_over_xyac)
+avg_actual_yac_over_xyac = mean(actual_yac_over_xyac)
+interceptions
+fumble lost
+fumble forced
+
+"broken down by run zone and run location for rusher_id for each specific game_id" can be a performance metric for oline and running backs
+
+total rushing yards
+average rushing yards
+rush attempt
+rush touchdowns
+first down rush
+total first downs
+fumble lost
+fumble forced
+
+total penalty yards
+total time of possession
+average time of possession
+
+Play type:
+shotgun 
+no huddle 
+quarterback dropback
+quarterback scramble
+
+Play type result:
+third down conversion
+third down fail
+fourth down conversion
+fourth down fail
+
+```{r}
+pbp6_2023 <- pbp4_2023 %>%
+  group_by(game_id, win, posteam, passer_player_id, rusher_player_id, receiver_player_id, pass_length, pass_location, run_gap, run_location, penalty_player_id) %>%
+  summarise(total_passing_yards = sum(passing_yards),
+            pass_attempts = sum(pass_attempt),
+            incomplete_pass = sum(incomplete_pass),
+            completion_per = 1 - (incomplete_pass/pass_attempts),
+            avg_passing_yards = mean(passing_yards),
+            total_air_passing_yards = sum(air_yards),
+            avg_air_passing_yards = mean(air_yards),
+            pass_touchdown = sum(pass_touchdown),
+            total_rushing_yards = sum(rushing_yards),
+            avg_rushing_yards = mean(rushing_yards),
+            rush_attempt = sum(rush_attempt),
+            rush_touchdown = sum(rush_touchdown),
+            total_receiving_yards = sum(receiving_yards),
+            avg_receiving_yards = mean(receiving_yards),
+            avg_cpoe = mean(cpoe),
+            avg_qb_epa = mean(qb_epa),
+            avg_xyac_epa = mean(xyac_epa),
+            avg_time_of_possession = mean(drive_seconds),
+            total_time_of_possession = sum(drive_seconds),
+            avg_air_epa = mean(air_epa),
+            avg_yac_epa = mean(yac_epa),
+            actual_yac_over_xyac_epa = avg_yac_epa - avg_xyac_epa,
+            total_actual_yac_over_xyac = sum(actual_yac_over_xyac),
+            avg_actual_yac_over_xyac = mean(actual_yac_over_xyac),
+            total_penalty_yards = sum(penalty_yards),
+            total_first_downs = sum(first_down),
+            interception = sum(interception),
+            fumble_lost = sum(fumble_lost),
+            fumble_forced = sum(fumble_forced),
+            third_down_converted = sum(third_down_converted),
+            third_down_failed = sum(third_down_failed),
+            fourth_down_converted = sum(fourth_down_converted),
+            fourth_down_failed = sum(fourth_down_failed),
+            shotgun = sum(shotgun),
+            no_huddle = sum(no_huddle),
+            qb_dropback = sum(qb_dropback),
+            qb_scramble = sum(qb_scramble),
+            first_down_rush = sum(first_down_rush),
+            first_down_pass = sum(first_down_pass),
+            
+            .groups = 'drop')
+pbp6_2023
+```
+
+In the code below, we replace all the na values with either the mean or a value of 0 depending on the column
+
+
+```{r}
+pbp7_2023 <- pbp6_2023 %>%
+  select(-c(1, 3:6, 11)) %>%
+  mutate_all(~replace(., is.na(.), mean(., na.rm = TRUE)))
+
+pbp7_2023 <- pbp7_2023 %>%
+  mutate_at(vars(2:5), ~replace(., is.na(.), 0))
+
+
+```
+
+In the code below, our group creates two new datasets: training set and testing set. The training set nfl_train has 7496 observations along with the values for 44 different variables. The testing set nfl_test has 1875 observations along with the values for 44 different variables.
+
+```{r}
+set.seed(11111)
+sample <- sample.split(pbp7_2023$win, SplitRatio = 0.8)
+
+nfl_train <- subset(pbp7_2023, sample == TRUE)
+nfl_test <- subset(pbp7_2023, sample == FALSE)
+
+dim(nfl_train)
+dim(nfl_test)
+```
+
+The code below checks the summary statistics for each of the 44 variables in the nfl_train dataset
+
+```{r}
+summary(nfl_train)
+sapply(lapply(nfl_train, unique),length)
+```
+# Logistic Regression
+
+In the logistic regression output below, it was interesting to see that run gap and run location were less statistically significant than pass length and pass location which can be used to say that potentially passes are more important to home wins than runs. However, to counteract that interpretation, it is interesting to see that average time of possession is statistically significant because running the ball tends to chew away the clock based on the fact that time doesn't run on incompletions. It was interesting to see play type results like fourth down failed or play type like shotgun become statistically significant. Also, it is important to note that 2 quarterback performance metrics and 2 runningback performance metrics and 1 receiving performance metric were statistically significant. This can mean that QB performance metrics don't always result in predicting the probability of a home win.
+
+```{r}
+nfl_regression_train <- nfl_train  
+nfl_regression_test <- nfl_test  
+
+
+NFLfit1 <- glm(win ~ ., data = nfl_regression_test, family = binomial(link = "logit"))
+summary(NFLfit1)
+```
+
+```{r}
+head(nfl_train)
+```
+# XGBoost Model
+
+```{r}
+dtrain <- xgb.DMatrix(data = as.matrix(nfl_train[,-c(1:5)]), label = as.numeric(nfl_train$win))
+# Create test matrix
+
+
+
+dtest <- xgb.DMatrix(data = as.matrix(nfl_test[,-c(1:5)]), label = as.numeric(nfl_test$win))
+```
+
+XGBoost uses its own data type called DMatrix that is an efficient method for storing sparse matrices (Many Zeros)
+
+# Training our XGBoost Model
+
+
+```{r}
+set.seed(111111)
+bst_1 <- xgboost(data = dtrain, # Set training data
+               
+               nrounds = 100, # Set number of rounds
+               objective = "binary:logistic",
+               eval_metric = "error", 
+               eval_metric = "auc",
+               verbose = 1, # 1 - Prints out fit
+                print_every_n = 20) # Prints out result every 20th iteration
+```
+
+```{r}
+set.seed(111111)
+bst <- xgb.cv(data = dtrain, # Set training data
+              
+              nfold = 5, # Use 5 fold cross-validation
+               
+               eta = 0.1, # Set learning rate
+              
+               nrounds = 1000, # Set number of rounds
+               early_stopping_rounds = 50,
+               objective = "binary:logistic",
+               eval_metric = "error", 
+               eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+               
+               verbose = 1, # 1 - Prints out fit
+               nthread = 1, # Set number of parallel threads
+               print_every_n = 20) # Prints out result every 20th iteration
+```
+From this we see 56 was the optimal number of iterations for our model. We use this number solely to ensure that we are doing a sufficient amount of rounds for our next tuning stages. We will set the number of iterations to 1000 and include an early stop parameter of 50 for our next round of tuning.
+
+
+```{r}
+max_depth_vals <- c(3, 5, 7, 10, 15) # Create vector of max depth values
+min_child_weight <- c(1,3,5,7, 10, 15) # Create vector of min child values
+
+# Expand grid of parameter values
+cv_params <- expand.grid(max_depth_vals, min_child_weight)
+names(cv_params) <- c("max_depth", "min_child_weight")
+# Create results vector
+rmse_vec  <- rep(NA, nrow(cv_params)) 
+# Loop through results
+for(i in 1:nrow(cv_params)){
+  set.seed(111111)
+  bst_tune <- xgb.cv(data = dtrain, # Set training data
+                     
+                     nfold = 5, # Use 5 fold cross-validation
+                     
+                     eta = 0.1, # Set learning rate
+                     max.depth = cv_params$max_depth[i], # Set max depth
+                     min_child_weight = cv_params$min_child_weight[i], # Set minimum number of samples in node to split
+                     
+                     
+                     nrounds = 1000, # Set number of rounds
+                     early_stopping_rounds = 50,
+                     objective = "binary:logistic",
+                     eval_metric = "error", 
+                     eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                     
+                     verbose = 1, # 1 - Prints out fit
+                     nthread = 1, # Set number of parallel threads
+                     print_every_n = 20 # Prints out result every 20th iteration
+                     
+  ) # Set evaluation metric to use
+  
+  rmse_vec[i] <- bst_tune$evaluation_log$test_auc_mean[bst_tune$best_ntreelimit]
+  
+  
+}
+```
+
+
+
+
+```{r}
+# Join results in dataset
+res_db <- cbind.data.frame(cv_params, rmse_vec)
+names(res_db)[3] <- c("auc") 
+res_db$max_depth <- as.factor(res_db$max_depth) # Convert tree number to factor for plotting
+res_db$min_child_weight <- as.factor(res_db$min_child_weight) # Convert node size to factor for plotting
+# Print AUC heatmap
+g_2 <- ggplot(res_db, aes(y = max_depth, x = min_child_weight, fill = auc)) + # set aesthetics
+  geom_tile() + # Use geom_tile for heatmap
+  theme_bw() + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+                       mid = "white", # Choose mid color
+                       high = "red", # Choose high color
+                       midpoint =mean(res_db$auc), # Choose mid point
+                       space = "Lab", 
+                       na.value ="grey", # Choose NA value
+                       guide = "colourbar", # Set color bar
+                       aesthetics = "fill") + # Select aesthetics to apply
+  labs(x = "Minimum Child Weight", y = "Max Depth", fill = "AUC") # Set labels
+g_2 # Generate plot
+
+```
+
+
+```{r}
+res_db[which.max(res_db$auc),] 
+```
+
+Here we see that the low Minimum Child Weight (3) and middle Max Depth (7) have the highest AUC and works best for our model.  Our best set of results is from a max_depth value of 7 and a min child weight of 3 has the highest AUC, so our group decided to use max_depth value of 7 and a min child weight of 3.
+
+```{r}
+gamma_vals <- c(0, 0.05, 0.1, 0.15, 0.2) # Create vector of gamma values
+
+# Be Careful - This can take a very long time to run
+set.seed(111111)
+rmse_vec  <- rep(NA, length(gamma_vals))
+for(i in 1:length(gamma_vals)){
+  bst_tune <- xgb.cv(data = dtrain, # Set training data
+                     
+                     nfold = 5, # Use 5 fold cross-validation
+                     
+                     eta = 0.1, # Set learning rate
+                     max.depth = 7, # Set max depth
+                     min_child_weight = 3, # Set minimum number of samples in node to split
+                     gamma = gamma_vals[i], # Set minimum loss reduction for split
+                     
+                     
+                     
+                     nrounds = 1000, # Set number of rounds
+                     early_stopping_rounds = 50,
+                     objective = "binary:logistic",
+                     eval_metric = "error", 
+                     eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                     
+                     verbose = 1, # 1 - Prints out fit
+                     nthread = 1, # Set number of parallel threads
+                     print_every_n = 20 # Prints out result every 20th iteration
+  ) # Set evaluation metric to use
+  
+  
+  rmse_vec[i] <- bst_tune$evaluation_log$test_auc_mean[bst_tune$best_ntreelimit]
+}
+```
+
+Best is 221, now tune the subsample and colsample by tree parameters
+
+```{r}
+cbind.data.frame(gamma_vals, rmse_vec) #highest one because auc_vec instead of rmse_vec forgot to change name
+```
+
+Here we see that a gamma value of 0.15 gives us the highest AUC in the rmse_vec column(forgot to change name)
+
+```{r}
+###### 3 - Subsample and Column sample Tuning ######
+
+# Be Careful - This can take a very long time to run
+subsample <- c(0.6, 0.7, 0.8, 0.9, 1) # Create vector of subsample values
+colsample_by_tree <- c(0.6, 0.7, 0.8, 0.9, 1) # Create vector of col sample values
+
+# Expand grid of tuning parameters
+cv_params <- expand.grid(subsample, colsample_by_tree)
+names(cv_params) <- c("subsample", "colsample_by_tree")
+# Create vectors to store results
+rmse_vec <- rep(NA, nrow(cv_params)) 
+# Loop through parameter values
+for(i in 1:nrow(cv_params)){
+  set.seed(111111)
+  bst_tune <- xgb.cv(data = dtrain, # Set training data
+                     
+                     nfold = 5, # Use 5 fold cross-validation
+                     
+                     eta = 0.1, # Set learning rate
+                     max.depth = 7, # Set max depth
+                     min_child_weight = 3, # Set minimum number of samples in node to split
+                     gamma = 0.2, # Set minimum loss reduction for split
+                     subsample = cv_params$subsample[i], # Set proportion of training data to use in tree
+                     colsample_bytree = cv_params$colsample_by_tree[i], # Set number of variables to use in each tree
+                     
+                     nrounds = 1000, # Set number of rounds
+                     early_stopping_rounds = 50,
+                     objective = "binary:logistic",
+                     eval_metric = "error", 
+                     eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                     
+                     verbose = 1, # 1 - Prints out fit
+                     nthread = 1, # Set number of parallel threads
+                     print_every_n = 20 # Prints out result every 20th iteration
+  ) # Set evaluation metric to use
+  
+  
+  rmse_vec[i] <- bst_tune$evaluation_log$test_auc_mean[bst_tune$best_ntreelimit]
+  
+  
+}
+```
+
+```{r}
+res_db <- cbind.data.frame(cv_params, rmse_vec)
+names(res_db)[3] <- c("auc") 
+res_db$subsample <- as.factor(res_db$subsample) # Convert tree number to factor for plotting
+res_db$colsample_by_tree <- as.factor(res_db$colsample_by_tree) # Convert node size to factor for plotting
+g_4 <- ggplot(res_db, aes(y = colsample_by_tree, x = subsample, fill = auc)) + # set aesthetics
+  geom_tile() + # Use geom_tile for heatmap
+  theme_bw() + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+                       mid = "white", # Choose mid color
+                       high = "red", # Choose high color
+                       midpoint =mean(res_db$auc), # Choose mid point
+                       space = "Lab", 
+                       na.value ="grey", # Choose NA value
+                       guide = "colourbar", # Set color bar
+                       aesthetics = "fill") + # Select aesthetics to apply
+  labs(x = "Subsample", y = "Column Sample by Tree", fill = "auc") # Set labels
+g_4 # Generate plot
+```
+
+```{r}
+res_db
+```
+
+From this visual, it looks like the optimal values of the parameters to use are a subsample parameter of 0.9 and a colsample_by_tree of 0.9 because it has the highest AUC.
+
+```{r}
+res_db[which.max(res_db$auc),]
+```
+
+
+```{r}
+# Use xgb.cv to run cross-validation inside xgboost
+set.seed(111111)
+bst_mod_1 <- xgb.cv(data = dtrain, # Set training data
+                    
+                    nfold = 5, # Use 5 fold cross-validation
+                    
+                    eta = 0.3, # Set learning rate
+                    max.depth = 7, # Set max depth
+                    min_child_weight = 3, # Set minimum number of samples in node to split
+                    gamma = .2, # Set minimum loss reduction for split
+                    subsample = .9, # Set proportion of training data to use in tree
+                    colsample_bytree =  .9, # Set number of variables to use in each tree
+                    
+                    nrounds = 1000, # Set number of rounds
+                    early_stopping_rounds = 50, 
+                    objective = "binary:logistic",
+                    eval_metric = "error", 
+                    eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                    
+                    verbose = 1, # 1 - Prints out fit
+                    nthread = 1, # Set number of parallel threads
+                    print_every_n = 20 # Prints out result every 20th i
+)
+```
+
+
+```{r}
+set.seed(111111)
+bst_mod_2 <- xgb.cv(data = dtrain, # Set training data
+                    
+                    nfold = 5, # Use 5 fold cross-validation
+                    
+                    eta = 0.1, # Set learning rate
+                    max.depth =  7, # Set max depth
+                    min_child_weight = 3, # Set minimum number of samples in node to split
+                    gamma = .2, # Set minimum loss reduction for split
+                    subsample = .9, # Set proportion of training data to use in tree
+                    colsample_bytree = .9, # Set number of variables to use in each tree
+                    
+                    nrounds = 1000, # Set number of rounds
+                    early_stopping_rounds = 50,
+                    objective = "binary:logistic",
+                    eval_metric = "error", 
+                    eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                    
+                    verbose = 1, # 1 - Prints out fit
+                    nthread = 1, # Set number of parallel threads
+                    print_every_n = 20 # Prints out result every 20th iteration
+) # Set evaluation metric to use
+```
+
+```{r}
+set.seed(111111)
+bst_mod_3 <- xgb.cv(data = dtrain, # Set training data
+                    
+                    nfold = 5, # Use 5 fold cross-validation
+                    
+                    eta = 0.05, # Set learning rate
+                    max.depth = 7, # Set max depth
+                    min_child_weight = 3, # Set minimum number of samples in node to split
+                    gamma = .2, # Set minimum loss reduction for split
+                    subsample = .9 , # Set proportion of training data to use in tree
+                    colsample_bytree =  .9, # Set number of variables to use in each tree
+                    
+                    nrounds = 1000, # Set number of rounds
+                    early_stopping_rounds = 50,
+                    objective = "binary:logistic",
+                    eval_metric = "error", 
+                    eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                    
+                    verbose = 1, # 1 - Prints out fit
+                    nthread = 1, # Set number of parallel threads
+                    print_every_n = 20 # Prints out result every 20th iteration
+) # Set evaluation metric to use
+```
+
+```{r}
+set.seed(111111)
+bst_mod_4 <- xgb.cv(data = dtrain, # Set training data
+                    
+                    nfold = 5, # Use 5 fold cross-validation
+                    
+                    eta = 0.01, # Set learning rate
+                    max.depth = 7, # Set max depth
+                    min_child_weight = 3, # Set minimum number of samples in node to split
+                    gamma = 0.2, # Set minimum loss reduction for split
+                    subsample = .9, # Set proportion of training data to use in tree
+                    colsample_bytree = .9, # Set number of variables to use in each tree
+                    
+                    nrounds = 1000, # Set number of rounds
+                    early_stopping_rounds = 50,
+                    objective = "binary:logistic",
+                    eval_metric = "error", 
+                    eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                    
+                    verbose = 1, # 1 - Prints out fit
+                    nthread = 1, # Set number of parallel threads
+                    print_every_n = 20 # Prints out result every 20th iteration
+) # Set evaluation metric to use
+```
+
+
+
+
+```{r}
+set.seed(111111)
+bst_mod_5 <- xgb.cv(data = dtrain, # Set training data
+                    
+                    nfold = 5, # Use 5 fold cross-validation
+                    
+                    eta = 0.005, # Set learning rate
+                    max.depth = 7, # Set max depth
+                    min_child_weight = 3, # Set minimum number of samples in node to split
+                    gamma = .2, # Set minimum loss reduction for split
+                    subsample = .9 , # Set proportion of training data to use in tree
+                    colsample_bytree = .9, # Set number of variables to use in each tree
+                    
+                    nrounds = 1000, # Set number of rounds
+                    early_stopping_rounds = 50,
+                    objective = "binary:logistic",
+                    eval_metric = "error", 
+                    eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                    
+                    verbose = 1, # 1 - Prints out fit
+                    nthread = 1, # Set number of parallel threads
+                    print_every_n = 20 # Prints out result every 20th iteration
+                    
+) # Set evaluation metric to use
+```
+
+
+
+```{r}
+# Extract results for model with eta = 0.3
+pd1 <- cbind.data.frame(bst_mod_1$evaluation_log[,c("iter", "test_error_mean")], rep(0.3, nrow(bst_mod_1$evaluation_log)))
+names(pd1)[3] <- "eta"
+# Extract results for model with eta = 0.1
+pd2 <- cbind.data.frame(bst_mod_2$evaluation_log[,c("iter", "test_error_mean")], rep(0.1, nrow(bst_mod_2$evaluation_log)))
+names(pd2)[3] <- "eta"
+# Extract results for model with eta = 0.05
+pd3 <- cbind.data.frame(bst_mod_3$evaluation_log[,c("iter", "test_error_mean")], rep(0.05, nrow(bst_mod_3$evaluation_log)))
+names(pd3)[3] <- "eta"
+# Extract results for model with eta = 0.01
+pd4 <- cbind.data.frame(bst_mod_4$evaluation_log[,c("iter", "test_error_mean")], rep(0.01, nrow(bst_mod_4$evaluation_log)))
+names(pd4)[3] <- "eta"
+# Extract results for model with eta = 0.005
+pd5 <- cbind.data.frame(bst_mod_5$evaluation_log[,c("iter", "test_error_mean")], rep(0.005, nrow(bst_mod_5$evaluation_log)))
+names(pd5)[3] <- "eta"
+# Join datasets
+plot_data <- rbind.data.frame(pd1, pd2, pd3, pd4, pd5)
+# Converty ETA to factor
+plot_data$eta <- as.factor(plot_data$eta)
+# Plot points
+g_6 <- ggplot(plot_data, aes(x = iter, y = test_error_mean, color = eta))+
+  geom_point(alpha = 0.5) +
+  theme_bw() + # Set theme
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Number of Trees", title = "Error rate v Number of Trees",
+       y = "Error Rate", color = "Learning \n Rate")  # Set labels
+g_6
+```
+
+
+Here we are looking for the line which reaches the lowest error rate. From this it looks like an eta value of 0.05 gives the best results for this dataset. We decided to use 0.05 because we saw the lowest point of the graph for the line 0.05 but also a good shape for the graph. We can now fit our final model using our tuned hyper parameters:
+
+
+```{r}
+set.seed(111111)
+bst_final <- xgboost(data = dtrain, # Set training data
+                     
+                     
+                     
+                     eta = .05, # Set learning rate
+                     max.depth =  7, # Set max depth
+                     min_child_weight = 3, # Set minimum number of samples in node to split
+                     gamma = .2, # Set minimum loss reduction for split
+                     subsample = .9, # Set proportion of training data to use in tree
+                     colsample_bytree = .9, # Set number of variables to use in each tree
+                     
+                     nrounds = 1000, # Set number of rounds
+                     early_stopping_rounds = 50,
+                     objective = "binary:logistic",
+                     eval_metric = "error", 
+                     eval_metric = "auc",# Set number of rounds to stop at if there is no improvement
+                     
+                     verbose = 1, # 1 - Prints out fit
+                     nthread = 1, # Set number of parallel threads
+                     print_every_n = 20 # Prints out result every 20th iteration
+                     
+) # Set evaluation metric to use
+```
+
+
+```{r}
+# Extract importance
+imp_mat <- xgb.importance(model = bst_final)
+# Plot importance (top 10 variables)
+xgb.plot.importance(imp_mat, top_n = 10)
+```
+
+The most important variables in order are average time of possession, average quarterback expected points added (epa), total time of possession, average air epa, average expected yards after catch epa, average completion percentage over expectatition, average yards after catch epa,  actual yards after catch minus expected yards after catch epa, average air passing yards, and total air passing yards.
+
+
+# Random Forest
+
+
+
+```{r}
+which(!nfl_train$win %in% c(0,1) )
+```
+Here we assign a dataset called temp to the win values within the nfl_train dataset that aren't 0 or 1
+
+```{r}
+temp <- nfl_train[which(!nfl_train$win %in% c(0,1) ),]
+```
+
+After, we create two new nfl_train and nfl_test datasets that only contain the values of 0 or 1
+
+```{r}
+nfl_train <- nfl_train[which(nfl_train$win %in% c(0,1)),]
+nfl_test <- nfl_test[which(nfl_test$win %in% c(0,1)),]
+```
+
+
+```{r}
+
+
+library(randomForest)
+library(caret)
+
+# Ensure that 'win' is a column in nfl_train
+if (!("win" %in% colnames(nfl_train))) {
+  stop("Column 'win' not found in nfl_train.")
+}
+
+# Set seed and fit random forest
+set.seed(123456)
+rf_mod_nfl <- randomForest(factor(win) ~ .,
+                           data = nfl_train[,-c(2:5)],
+                           ntree = 200,
+                           nodesize = 1)
+
+# Predict and evaluate
+rf_pred_nfl <- predict(rf_mod_nfl, nfl_test, type = 'prob')
+rf_pred_nfl <- as.factor(ifelse(rf_pred_nfl[,2] > 0.45, 1, 0))
+
+
+rf_pred_nfl2 <- rep(0, length(rf_pred_nfl))
+
+
+t <- table(rf_pred_nfl, nfl_test$win) # Create table
+confusionMatrix(t, positive = "1")
+
+```
+
+In our first model, we see that the accuracy is 0.5556.
+
+```{r}
+tree_1 <- getTree(rf_mod_nfl, 1, labelVar=TRUE) # Extract single tree,
+head(tree_1) 
+```
+
+```{r}
+oob_error <- rf_mod_nfl$err.rate[,1]
+oob_error
+length(oob_error)
+```
+
+```{r}
+plot_dat <- cbind.data.frame(rep(1:length(oob_error)), oob_error) # Create plot data
+names(plot_dat) <- c("trees", "oob_error") 
+
+
+# Plot oob error
+g_1 <- ggplot(plot_dat, aes(x = trees, y = oob_error)) + # Set x as trees and y as error
+  geom_point(alpha = 0.5, color = "blue") + # Select geom point
+  geom_smooth() + # Add smoothing line
+  theme_bw() + # Set theme
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Number of Trees", title = "Error Rate v Number of Trees",
+       y = "Error Rate")  # Set labels
+g_1 # Print plot
+```
+From this plot we can see that as the number of trees increase the error rate continues to fall as the number of trees increases. Lets try increasing the number of trees to 1,000 and see if we will get continued improvement. It starts flattening around 100 trees.
+
+```{r}
+
+set.seed(123456)
+rf_mod_nfl2 <- randomForest(factor(win) ~ .,
+                           data = nfl_train[,-c(2:5)],
+                           ntree = 1000,
+                           nodesize = 1)
+
+# Predict and evaluate
+rf_pred_nfl2 <- predict(rf_mod_nfl2, nfl_test, type = 'prob')
+rf_pred_nfl2 <- as.factor(ifelse(rf_pred_nfl2[,2] > 0.45, 1, 0))
+
+
+rf_pred_nfl3 <- rep(0, length(rf_pred_nfl2))
+
+
+t <- table(rf_pred_nfl2, nfl_test$win) # Create table
+confusionMatrix(t, positive = "1")
+
+```
+
+ere we see that by using a larger number of trees we actually suffered a small increase in accuracy from 0.5556 to 0.5632. 
+
+```{r}
+oob_error <- rf_mod_nfl2$err.rate[,1]
+oob_error
+length(oob_error)
+```
+
+
+```{r}
+plot_dat <- cbind.data.frame(rep(1:length(oob_error)), oob_error) # Create plot data
+names(plot_dat) <- c("trees", "oob_error") # Name plot data
+
+
+# Plot oob error
+g_2 <- ggplot(plot_dat, aes(x = trees, y = oob_error)) + # Set x as trees and y as error
+  geom_point(alpha = 0.5, color = "blue") + # Select geom point
+  geom_smooth() + # Add smoothing line
+  theme_bw() + # Set theme
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  labs(x = "Number of Trees", title = "Error Rate v Number of Trees",
+       y = "Error Rate")  # Set labels
+g_2 # Create plot
+```
+Here we see that initially the error rate falls significantly and then levels off after about a little past 250 trees, though there is a slight continuous improvement as the number of trees increases. The plot also shows that the model did not improve significantly from 375 trees to 1000 trees.
+
+```{r}
+plot_dat <- cbind.data.frame(rep(1:length(oob_error)), oob_error) # Create plot data
+# Careful this can take a long time to run
+trees <- c(10, 25, 50, 100, 200, 500, 1000) # Create vector of possible tree sizes
+nodesize <- c(1, 10, 25, 50, 100, 200, 500, 1000) # Create vector of possible node sizes
+
+params <- expand.grid(trees, nodesize) # Expand grid to get data frame of parameter combinations
+names(params) <- c("trees", "nodesize") # Name parameter data frame
+res_vec <- rep(NA, nrow(params)) # Create vector to store accuracy results
+
+for(i in 1:nrow(params)){ # For each set of parameters
+  set.seed(987654) # Set seed for reproducability
+  mod <- randomForest(as.factor(win) ~.,
+                      data = nfl_train[,-c(2:5)], # Set data
+                      mtry = 7, # Set number of variables
+                      importance = FALSE,  #
+                      ntree = params$trees[i], # Set number of trees
+                      nodesize = params$nodesize[i]) # Set node size
+  res_vec[i] <- 1 - mod$err.rate[nrow(mod$err.rate),1] #Professor Martin the issue with length is here. I messed with this equation a little
+}
+```
+
+```{r}
+summary(res_vec)
+```
+
+
+```{r}
+res_db <- cbind.data.frame(params, res_vec) # Join parameters and accuracy results
+names(res_db)[3] <- "oob_accuracy" # Name accuracy results column
+res_db # Print accuracy results column
+```
+
+
+```{r}
+res_db$trees <- as.factor(res_db$trees) # Convert tree number to factor for plotting
+res_db$nodesize <- as.factor(res_db$nodesize) # Convert node size to factor for plotting
+g_2 <- ggplot(res_db, aes(y = trees, x = nodesize, fill = oob_accuracy)) + # set aesthetics
+  geom_tile() + # Use geom_tile for heatmap
+  theme_bw() + # Set theme
+  scale_fill_gradient2(low = "blue", # Choose low color
+    mid = "white", # Choose mid color
+    high = "red", # Choose high color
+    midpoint =mean(res_db$oob_accuracy), # Choose mid point
+    space = "Lab", 
+    na.value ="grey", # Choose NA value
+    guide = "colourbar", # Set color bar
+    aesthetics = "fill") + # Select aesthetics to apply
+  labs(x = "Node Size", y = "Number of Trees", fill = "OOB Accuracy") # Set labels
+g_2 # Generate plot
+```
+Here we see that a high number of trees and mix of high and low node size produce the best OOB accuracy. I decided to used 1000 trees and 1 node size due to the higher accuracy from before
+
+```{r}
+res_db[which.max(res_db$oob_accuracy),] # View best set of results
+```
+
+
+```{r}
+set.seed(123456)
+rf_mod_nfl3 <- randomForest(factor(win) ~., # Set tree formula
+               data = nfl_train[,-c(2:5)], # Set dataset
+             
+                ntree = 1000, # Set number of trees
+                nodesize = 1) # Set node size
+
+
+
+# Predict and evaluate
+rf_pred_nfl3 <- predict(rf_mod_nfl3, nfl_test, type = 'prob')
+rf_pred_nfl3 <- as.factor(ifelse(rf_pred_nfl3[,2] > 0.45, 1, 0))
+
+
+rf_pred_nfl4 <- rep(0, length(rf_pred_nfl3))
+
+
+t <- table(rf_pred_nfl3, nfl_test$win) # Create table
+confusionMatrix(t, positive = "1")
+```
+The accuracy for the third model stayed at 0.5632
+
+```{r}
+rf_mod_nfl4 <- randomForest(factor(win) ~., # Set tree formula
+               data = nfl_train[,-c(2:5)], # Set dataset
+                
+                ntree = 1000, # Set number of trees
+                nodesize = 1,  # Set node size
+                importance = TRUE, # Set to true to generate importance matrix
+                proximity = TRUE) # Set to true to generate proximity matrix
+
+
+
+# Predict and evaluate
+rf_pred_nfl4 <- predict(rf_mod_nfl4, nfl_test, type = 'prob')
+rf_pred_nfl4 <- as.factor(ifelse(rf_pred_nfl4[,2] > 0.45, 1, 0))
+
+
+rf_pred_nfl5 <- rep(0, length(rf_pred_nfl4))
+
+
+t <- table(rf_pred_nfl4, nfl_test$win) # Create table
+confusionMatrix(t, positive = "1")
+
+```
+
+In our final model, we found that the accuracy decreased to 0.5572 from 0.5632.
+
+```{r}
+importance_matrix <- randomForest::importance(rf_mod_nfl4)
+# Print importance matrix
+importance_matrix
+```
+
+
+
+```{r}
+varImpPlot(rf_mod_nfl4, type =2, n.var = 10) # Plot importance
+```
+
+The most important variables in order are average time of possession, average quarterback expected points added (epa), total time of possession, average air epa, average completion percentage over expectatition, average yards after catch epa, average expected yards after catch epa,  actual yards after catch minus expected yards after catch epa, average air passing yards, and total air passing yards.
+
+```{r}
+rf_pred_nfl4 <- predict(rf_mod_nfl4, nfl_test, type = 'prob')
+#rf_pred_nfl4 <- as.factor(ifelse(rf_pred_nfl4[,2] > 0.45, 1, 0))
+
+# Assuming rf_pred_nfl4 contains your predicted values (0 or 1) and nfl_test$win contains the true labels
+roc_obj <- roc(response = nfl_test$win, predictor = as.numeric(rf_pred_nfl4[,2]))
+auc_value <- auc(roc_obj)
+
+auc_value
+```
+
+Here we see that the AUC value is 0.5876
+
+```{r}
+
+dtrain <- xgb.DMatrix(data = as.matrix(nfl_train[,-c(1:5)]), label = as.numeric(nfl_train$win))
+# Create test matrix
+
+
+
+dtest <- xgb.DMatrix(data = as.matrix(nfl_test[,-c(1:5)]), label = as.numeric(nfl_test$win))
+```
+
+```{r}
+xgb_preds <- predict(bst_final, dtest)
+
+```
+
+
+
+
+```{r}
+
+roc_obj <- roc(response = nfl_test$win, predictor = xgb_preds)
+auc_value <- auc(roc_obj)
+
+auc_value
+```
+
+Here we see that the AUC value is 0.6081 which is better than our Random Forest model, so XGBoost is the best model.
+

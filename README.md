@@ -7,4 +7,6 @@ plays and are broken down into pass length and pass location for pass plays or r
 plays. These derivative statistical data are further grouped for each specific quarterback_id, rusher_id, and
 wide_receiver_id for each specific game_id based on the zone locations above. This analysis aims to provide value
 insight into the world of professional football by investigating how play by play performance metrics for each
-specific player correlate with home wins or home losses.
+specific player correlate with home wins or home losses. 
+
+This project focuses on using play by play NFL data from nflfastR for the 2023 season.
